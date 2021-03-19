@@ -1,0 +1,300 @@
+---
+title: "FINAL PROJECT TWO"
+subtitle: Data classification and prediction of breast cancer
+output:
+  html_document:
+    df_print: paged
+---
+
+URL LINK GITHUB: https://github.com/CB560/CB560Repository
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = normalizePath("/Users/COMPUTER_NAME/Desktop/PROJECT TWO FINAL"))
+
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(ggthemes)
+library(gridExtra)
+library(corrplot)
+library(reshape)
+library(caret)
+library(caretEnsemble)
+library(caTools)
+library(data.table)
+library(xgboost)
+library(gbm)
+library(kernlab)
+library(C50)
+library(glmnet)
+library(magrittr)
+
+```
+
+
+```{r}
+# Read the data
+df <- read.csv("data.csv", stringsAsFactors = TRUE)
+
+str(df)
+
+```
+
+```{r}
+
+# Remove id and X columns since they are not useful and have no values
+df$id <- NULL
+df$X <- NULL
+# Sort rows alphabetically and put target at the end
+df <- df[, order(names(df))]
+df <- df[, c(1:12, 14:31, 13)]
+
+```
+
+Data exploration
+
+Looking at the data, there are more cases of benign than malignant breast mass, so upsampling could be useful for the models. Looking at the boxplots of the scaled data shows that most of the attributes are skewed upwards and have outliers in the upper tail, and the area and radius have less variation, especially compared to concavity and smoothness. 
+
+By looking at the plots, it shows that the variables split by malignant and benign reveal the two features of symmetry and fractal dimension are not useful at separating the classes. The features like area, concavity, and radius all separate the data better. 
+
+By plotting the correlation between the variables, it shows that there is a high correlation between some variables since there is the mean, standard error, and worst case of the values, which should all be correlated since they all measure the spread of the same attributes. Principal Component Analysis would be a good way to reduce complexity and deal with the highly correlated variables.
+
+
+```{r}
+# Show summary of data
+summary(df)
+```
+```{r}
+ggplot(df, aes(x = diagnosis)) + 
+  geom_bar(aes(fill = 'pink')) + 
+  ggtitle("Distribution of diagnosis for the testing dataset") + 
+  theme(legend.position="none")
+```
+
+```{r}
+
+# Boxplot of scaled values
+df_box <- df[,c("area_mean", "compactness_mean", "concave.points_mean", "concavity_mean", "fractal_dimension_mean", "perimeter_mean", "radius_mean", "smoothness_mean", "symmetry_mean", "texture_mean")]
+colnames(df_box) <- c("area", "compact", "concave.pts", "concavity", "fractal_dim", "perim", "radius", "smoothness", "symmetry", "texture")
+ggplot(stack(data.frame(scale(df_box))), aes(x = ind, y = values)) +
+  geom_boxplot()
+
+```
+
+```{r}
+# Plot differences between malignant and benign
+g1 <- ggplot(df, aes(x=area_mean, fill=diagnosis)) + geom_density(alpha=0.25)
+g2 <- ggplot(df, aes(x=compactness_mean, fill=diagnosis)) + geom_density(alpha=0.25) 
+g3 <- ggplot(df, aes(x=concave.points_mean, fill=diagnosis)) + geom_density(alpha=0.25)
+g4 <- ggplot(df, aes(x=concavity_mean, fill=diagnosis)) + geom_density(alpha=0.25)
+g5 <- ggplot(df, aes(x=fractal_dimension_mean, fill=diagnosis)) + geom_density(alpha=0.25)
+g6 <- ggplot(df, aes(x=perimeter_mean, fill=diagnosis)) + geom_density(alpha=0.25)
+g7 <- ggplot(df, aes(x=radius_mean, fill=diagnosis)) + geom_density(alpha=0.25)
+g8 <- ggplot(df, aes(x=smoothness_mean, fill=diagnosis)) + geom_density(alpha=0.25)
+g9 <- ggplot(df, aes(x=symmetry_mean, fill=diagnosis)) + geom_density(alpha=0.25)
+g10 <- ggplot(df, aes(x=texture_mean, fill=diagnosis)) + geom_density(alpha=0.25)
+grid.arrange(g1,g2,g3,g4,g5,g6,g7,g8,g9,g10, ncol=2)
+```
+
+```{r}
+
+# Plot correlation matrix to see al correlating values
+corrplot(cor(df[,-31]), method="circle",)
+
+```
+METHOD
+
+When building the models, malignant is assigned positive and benign is assigned negative.
+
+Data is randomly split in a 70/30 train and test split. 
+
+12 different models are used with10-fold cross validation on the training data set. The individual models are then compared by their performance. 
+
+The 12 models:
+
+Tree-Based Models: “C5.0”, “rf”, “rpart”
+Boosting Models: “xgbTree”, “xgbLinear”, “gbm”
+Clustering Models: “knn”
+Linear Models: “glm”, “glmnet”
+Non-linear Models: “nb”, “svmPoly”, “nnet”
+
+Pre-processing methods for all twelve models:
+
+There are less cases of malignant than benign so upsampling is used. The data was centered and scaled to make sure the algorithms are performed correctly. The use of nzv, rorr and pca is to handle all highly correlated variables in the data set as shown in the above correlation matrix.
+
+ROC is optimized for these models to show a two-class summary report that shows sensitivity. Sensitivity is important because it has to do with cancer, an extremely small cell that is malignant can lead to the potential of the cancer spreading and then death. Maximizing recall over precision is very important.
+
+MODEL PERFORMANCE:
+
+rpart performed the worst in all three metrics of ROC, sensitivity, and specificity  
+Naiive bayes had poor sensitivity  
+Tree-based models had high variability in recall 
+The svm models had more variability in specificity. This is one of the models that was a best performer of the 12 different models.
+Linear models had more variability in specificity
+Neural network showed a good representations of the best performers as well.
+
+The correlation between the models is compared and will be used for the stack ensemble approach.
+
+Next compared the correlation between the models and decided not to remove any because the stacked ensemble model blends the strengths of each of these models as meta-models.
+
+PREDICTIVE MODEL PREPARATION
+
+```{r}
+# Split data into train set and test set
+
+index <- sample(1:nrow(df), 0.7 * nrow(df))
+train <- df[index,]
+test <- df[-index,]
+
+# This makes sure that malignant is positive and benign is negative
+
+df$diagnosis <- factor(df$diagnosis, levels = c("M", "B"))
+train$diagnosis <- factor(train$diagnosis, levels = c("M", "B"))
+test$diagnosis <- factor(test$diagnosis, levels = c("M", "B"))
+
+# Compare distribution of train and test data
+
+DistributionCompare <- cbind(prop.table(table(train$diagnosis)), prop.table(table(test$diagnosis)))
+colnames(DistributionCompare) <- c("Train", "Test")
+meltedDComp <- melt(DistributionCompare)
+ggplot(meltedDComp, aes(x=Var1, y=value)) + geom_bar(aes(fill=Var2), stat = "identity", position = "dodge") + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("Diagnosis") + ylab("Percent") + labs(fill="")
+
+```
+TRAINING TWELVE MODELS
+10-fold CV, center, scale, pca, upsampling and compare performance
+
+```{r}
+
+econtrol <- trainControl(method="cv", number=10, summaryFunction = twoClassSummary, 
+                         savePredictions = TRUE, classProbs = TRUE,  sampling = "up")
+models <- caretList(diagnosis ~., data=train,
+                    methodList=c("svmPoly", "nnet", "gbm", "xgbTree", "knn", "glm", "rf", "C5.0", 
+                                 "nb", "rpart", "xgbLinear", "glmnet"),
+                    preProcess = c("center", "scale", "nzv","corr", "pca"),
+                    trControl = econtrol,
+                    metric = "ROC")
+
+```
+
+RESULTS FOR ALL 12 MODELS
+
+```{r}
+
+results <- resamples(models)
+summary(results)
+
+```
+
+
+```{r}
+
+dotplot(results)
+
+```
+
+MODEL CORRELATION 
+
+```{r}
+
+mcr <-modelCor(results)
+mcr
+
+```
+
+```{r}
+
+splom(results)
+
+```
+
+STACKED MODEL USING BOOSTED TREE MODEL ON META-MODELS
+
+```{r}
+
+stack <- caretStack(models, method="xgbTree", metric="Sens", verbose = FALSE,
+                     trControl = trainControl(method="boot", number=15, savePredictions="final",
+                                              classProbs=TRUE, summaryFunction=twoClassSummary)
+)
+
+summary(stack)
+
+```
+
+
+PREDICT ON TEST DATA SET 
+
+```{r}
+test$nnet <- predict(models$nnet, test)
+test$svm <- predict(models$svmPoly, test)
+pred <- predict(stack, test, type="prob")
+threshold <- 0.5
+test$stack <- ifelse(pred>threshold, "M", "B")
+test$stack <- factor(test$stack, levels = c("M", "B"))
+
+summary(test$nnet)
+summary(test$svm)
+summary(test$stack)
+
+```
+
+RESULTS
+
+The best performing model the stacked ensemble model trained on the 12 meta-models was a boosted decision tree algorithm.
+
+Comparing individual models with the stacked model, the nn and svm models have the best sensitivity out of all of the individual models and still maintained a high ROC. 
+
+The confusion matrix below shows:
+
+nn model had a recall of 0.9091.
+svm model had a recall of 0.9545. 
+Stacked model had a recall of 1. 
+
+Looking at the stacked model it was able to identify all of the malignant cases or breast cancer correctly, it had the highest accuracy compared to the nn and svm and even though a higher recall means that precision worsens, the stacked model did not sacrifice precision because it had the highest precision of the three models as well, at 0.9041. 
+
+The stacked model was superior in all metrics and using so many meta-models gave it much for flexibility in identifying the difficult to predict observations that any one model had difficulty predicting correctly.
+
+CONFUSION MATRIX
+
+```{r}
+
+cmstackpreds <- confusionMatrix(test$nnet, test$diagnosis, positive="M", mode="everything")
+cmstackpreds
+
+```
+
+
+```{r}
+
+cmstackpreds <- confusionMatrix(test$svm, test$diagnosis, positive="M", mode="everything")
+cmstackpreds
+
+```
+
+
+```{r}
+
+cmstackpreds <- confusionMatrix(test$stack, test$diagnosis, positive="M", mode="everything")
+cmstackpreds
+
+```
+
+ANALYSIS AND RECOMMENDATION
+
+The stacked ensemble model had a high precision of accuracy in its ability to detect malignant cases which is more important in the analysis and detection than benign cases. This is important because the higher accuracy rate has the potential of saving three or more lives compared to the individual svm and nn. Each model had almost the same in the ability to identify benign cases. This precision is an example of how detecting and treating malignant breast mass is important before it spreads. May God help everyone who suffers from cancer. Please donate to charities that support cancer research.
+
+
+REFERENCES
+
+“U.S. Breast Cancer Statistics.” Breastcancer.org, https://www.breastcancer.org/symptoms/understand_bc/statistics.
+Street, Nick (1995). 
+
+UCI Machine Learning Repository
+[https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+%28Diagnostic%29]. Irvine, CA: University of California, School of Information and Computer Science.
+
+
